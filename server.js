@@ -8,10 +8,10 @@
 var express=require('express');
 var bodyParser=require('body-parser');
 var app = express();
-var cfenv = require("cfenv");
 const { IamAuthenticator } = require('ibm-cloud-sdk-core');
 const { CloudantV1 } = require('@ibm-cloud/cloudant');
-
+// load local .env if present
+require("dotenv").config();
 
 // enable parsing of http request body
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -20,19 +20,20 @@ app.use(bodyParser.json());
 // set the database name
 const dbName = 'mydb';
 
-// load local VCAP configuration  and service credentials if present
-var vcapLocal;
-try {
-  vcapLocal = require('./vcap-local.json');
-  console.log("Loaded local VCAP", vcapLocal);
-} catch (e) { }
-
-const appEnvOpts = vcapLocal ? { vcap: vcapLocal} : {}
+let cloudant_apikey,cloudant_url;
 
 // extract the Cloudant API key and URL from the credentials
-const appEnv = cfenv.getAppEnv(appEnvOpts);
-cloudant_apikey=appEnv.services['cloudantNoSQLDB'][0].credentials.apikey;
-cloudant_url=appEnv.services['cloudantNoSQLDB'][0].credentials.url;
+if(process.env.CE_SERVICES) {
+  cloudant_apikey=process.env.CE_SERVICES['cloudantNoSQLDB'][0].credentials.apikey;
+  cloudant_url=process.env.CE_SERVICES['cloudantNoSQLDB'][0].credentials.url;
+}
+// allow overwriting
+if (process.env.CLOUDANT_URL) {
+  cloudant_url=process.env.CLOUDANT_URL;
+}
+if (process.env.CLOUDANT_APIKEY) {
+  cloudant_apikey=process.env.CLOUDANT_APIKEY;
+}
 
 // establish IAM-based authentication
 const authenticator = new IamAuthenticator({
