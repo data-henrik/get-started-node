@@ -1,5 +1,5 @@
 ---
 applications:
- - name: GetStartedNode
+ - name: cf2ce-demo
    random-route: true
-   memory: 256M
+   memory: 128M
