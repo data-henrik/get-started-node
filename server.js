@@ -1,118 +1,26 @@
-var express = require("express");
+// Based on https://github.com/IBM/nodejs-cloudant and https://github.com/IBM-Cloud/get-started-node
+//
+// Small Node.js and Cloudant app to demonstrate Cloud Foundry to Code Engine migration.
+// This is the Cloud Foundry edition of the code.
+//
+
+// load required modules
+var express=require('express');
+var bodyParser=require('body-parser');
 var app = express();
 var cfenv = require("cfenv");
-var bodyParser = require('body-parser')
+const { IamAuthenticator } = require('ibm-cloud-sdk-core');
+const { CloudantV1 } = require('@ibm-cloud/cloudant');
 
-// parse application/x-www-form-urlencoded
-app.use(bodyParser.urlencoded({ extended: false }))
 
-// parse application/json
-app.use(bodyParser.json())
+// enable parsing of http request body
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
 
-let mydb, cloudant;
-var vendor; // Because the MongoDB and Cloudant use different API commands, we
-            // have to check which command should be used based on the database
-            // vendor.
-var dbName = 'mydb';
+// set the database name
+const dbName = 'mydb';
 
-// Separate functions are provided for inserting/retrieving content from
-// MongoDB and Cloudant databases. These functions must be prefixed by a
-// value that may be assigned to the 'vendor' variable, such as 'mongodb' or
-// 'cloudant' (i.e., 'cloudantInsertOne' and 'mongodbInsertOne')
-
-var insertOne = {};
-var getAll = {};
-
-insertOne.cloudant = function(doc, response) {
-  mydb.insert(doc, function(err, body, header) {
-    if (err) {
-      console.log('[mydb.insert] ', err.message);
-      response.send("Error");
-      return;
-    }
-    doc._id = body.id;
-    response.send(doc);
-  });
-}
-
-getAll.cloudant = function(response) {
-  var names = [];  
-  mydb.list({ include_docs: true }, function(err, body) {
-    if (!err) {
-      body.rows.forEach(function(row) {
-        if(row.doc.name)
-          names.push(row.doc.name);
-      });
-      response.json(names);
-    }
-  });
-  //return names;
-}
-
-let collectionName = 'mycollection'; // MongoDB requires a collection name.
-
-insertOne.mongodb = function(doc, response) {
-  mydb.collection(collectionName).insertOne(doc, function(err, body, header) {
-    if (err) {
-      console.log('[mydb.insertOne] ', err.message);
-      response.send("Error");
-      return;
-    }
-    doc._id = body.id;
-    response.send(doc);
-  });
-}
-
-getAll.mongodb = function(response) {
-  var names = [];
-  mydb.collection(collectionName).find({}, {fields:{_id: 0, count: 0}}).toArray(function(err, result) {
-    if (!err) {
-      result.forEach(function(row) {
-        names.push(row.name);
-      });
-      response.json(names);
-    }
-  });
-}
-
-/* Endpoint to greet and add a new visitor to database.
-* Send a POST request to localhost:3000/api/visitors with body
-* {
-*   "name": "Bob"
-* }
-*/
-app.post("/api/visitors", function (request, response) {
-  var userName = request.body.name;
-  var doc = { "name" : userName };
-  if(!mydb) {
-    console.log("No database.");
-    response.send(doc);
-    return;
-  }
-  insertOne[vendor](doc, response);
-});
-
-/**
- * Endpoint to get a JSON array of all the visitors in the database
- * REST API example:
- * <code>
- * GET http://localhost:3000/api/visitors
- * </code>
- *
- * Response:
- * [ "Bob", "Jane" ]
- * @return An array of all the visitor names
- */
-app.get("/api/visitors", function (request, response) {
-  var names = [];
-  if(!mydb) {
-    response.json(names);
-    return;
-  }
-  getAll[vendor](response);
-});
-
-// load local VCAP configuration  and service credentials
+// load local VCAP configuration  and service credentials if present
 var vcapLocal;
 try {
   vcapLocal = require('./vcap-local.json');
@@ -121,82 +29,105 @@ try {
 
 const appEnvOpts = vcapLocal ? { vcap: vcapLocal} : {}
 
+// extract the Cloudant API key and URL from the credentials
 const appEnv = cfenv.getAppEnv(appEnvOpts);
+cloudant_apikey=appEnv.services['cloudantNoSQLDB'][0].credentials.apikey;
+cloudant_url=appEnv.services['cloudantNoSQLDB'][0].credentials.url;
 
-if (appEnv.services['compose-for-mongodb'] || appEnv.getService(/.*[Mm][Oo][Nn][Gg][Oo].*/)) {
-  // Load the MongoDB library.
-  var MongoClient = require('mongodb').MongoClient;
+// establish IAM-based authentication
+const authenticator = new IamAuthenticator({
+  apikey: cloudant_apikey,
+});
 
-  dbName = 'mydb';
+// create a new client
+const cloudantClient = CloudantV1.newInstance({authenticator: authenticator,
+  serviceUrl: cloudant_url});
 
-  // Initialize database with credentials
-  if (appEnv.services['compose-for-mongodb']) {
-    MongoClient.connect(appEnv.services['compose-for-mongodb'][0].credentials.uri, null, function(err, db) {
-      if (err) {
-        console.log(err);
+
+  
+// create mydb database if it does not already exist
+cloudantClient.putDatabase({ db: dbName})
+    .then(data => {
+      console.log(dbName + ' database created');
+    })
+    .catch(error => {
+      // ignore if database already exists
+      if (error.status === 412) {
+        console.log(dbName + ' database already exists');
       } else {
-        mydb = db.db(dbName);
-        console.log("Created database: " + dbName);
+        console.log('Error occurred when creating ' + dbName +
+        ' database', error.error);
       }
+});
+  
+
+// add a new name or item with timestamp info for sorting
+app.post("/api/names", function (req, res, next) {
+  console.log('In route - addName');
+  let name = {
+    name: req.body.name,
+    timestamp: req.body.timestamp,
+  };
+
+  return cloudantClient.postDocument({
+    db: dbName,
+    document: name,
+  })
+    .then(addedName => {
+      console.log('Add name successful');
+      return res.status(201).json({
+        _id: addedName.id,
+        name: addedName.name,
+        timestamp: addedName.timestamp,
+      });
+    })
+    .catch(error => {
+      console.log('Add name failed');
+      return res.status(500).json({
+        message: 'Add name failed.',
+        error: error,
+      });
     });
-  } else {
-    // user-provided service with 'mongodb' in its name
-    MongoClient.connect(appEnv.getService(/.*[Mm][Oo][Nn][Gg][Oo].*/).credentials.uri, null,
-      function(err, db) {
-        if (err) {
-          console.log(err);
-        } else {
-          mydb = db.db(dbName);
-          console.log("Created database: " + dbName);
-        }
-      }
-    );
-  }
+});
 
-  vendor = 'mongodb';
-} else if (appEnv.services['cloudantNoSQLDB'] || appEnv.getService(/[Cc][Ll][Oo][Uu][Dd][Aa][Nn][Tt]/)) {
-  // Load the Cloudant library.
-  var Cloudant = require('@cloudant/cloudant');
 
-  // Initialize database with credentials
-  if (appEnv.services['cloudantNoSQLDB']) {
-    cloudant = Cloudant(appEnv.services['cloudantNoSQLDB'][0].credentials);
-  } else {
-     // user-provided service with 'cloudant' in its name
-     cloudant = Cloudant(appEnv.getService(/cloudant/).credentials);
-  }
-} else if (process.env.CLOUDANT_URL){
-  // Load the Cloudant library.
-  var Cloudant = require('@cloudant/cloudant');
+// retrieve the existing names or items
+app.get("/api/names", function (req, res, next) {
+  console.log('In route - getNames');
 
-  if (process.env.CLOUDANT_IAM_API_KEY){ // IAM API key credentials
-    let cloudantURL = process.env.CLOUDANT_URL
-    let cloudantAPIKey = process.env.CLOUDANT_IAM_API_KEY
-    cloudant = Cloudant({ url: cloudantURL, plugins: { iamauth: { iamApiKey: cloudantAPIKey } } });
-  } else { //legacy username/password credentials as part of cloudant URL
-    cloudant = Cloudant(process.env.CLOUDANT_URL);
-  }
-}
-if(cloudant) {
-  //database name
-  dbName = 'mydb';
+  return cloudantClient.postAllDocs({
+    db: dbName,
+    includeDocs: true,
+  })
+    .then(allDocuments => {
+      let fetchedNames = allDocuments.result;
+      let names = [];
+      let row = 0;
+      fetchedNames.rows.forEach(fetchedName => {
+        names[row] = {
+          _id: fetchedName.id,
+          name: fetchedName.doc.name,
+          timestamp: fetchedName.doc.timestamp,
+        };
+        row = row + 1;
+      });
+      console.log('Get names successful');
+      return res.status(200).json(names);
+    })
+    .catch(error => {
+      console.log('Get names failed');
+      return res.status(500).json({
+        message: 'Get names failed.',
+        error: error,
+      });
+    });
+});
 
-  // Create a new "mydb" database.
-  cloudant.db.create(dbName, function(err, data) {
-    if(!err) //err if database doesn't already exists
-      console.log("Created database: " + dbName);
-  });
 
-  // Specify the database we are going to use (mydb)...
-  mydb = cloudant.db.use(dbName);
-
-  vendor = 'cloudant';
-}
-
-//serve static file (index.html, images, css)
+//serve static file (index.html, js, css)
 app.use(express.static(__dirname + '/views'));
 
-var port = process.env.PORT || 3000
+var port = process.env.PORT || 8080
 app.listen(port, function() {
     console.log("To view your app, open this link in your browser: http://localhost:" + port);
 });
