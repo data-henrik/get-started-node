@@ -23,9 +23,10 @@ const dbName = 'mydb';
 let cloudant_apikey,cloudant_url;
 
 // extract the Cloudant API key and URL from the credentials
+// !!! note the lower case service name !!!
 if(process.env.CE_SERVICES) {
-  cloudant_apikey=process.env.CE_SERVICES['cloudantNoSQLDB'][0].credentials.apikey;
-  cloudant_url=process.env.CE_SERVICES['cloudantNoSQLDB'][0].credentials.url;
+  cloudant_apikey=process.env.CE_SERVICES['cloudantnosqldb'][0].credentials.apikey;
+  cloudant_url=process.env.CE_SERVICES['cloudantnosqldb'][0].credentials.url;
 }
 // allow overwriting
 if (process.env.CLOUDANT_URL) {
