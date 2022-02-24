@@ -1,5 +1,0 @@
----
-applications:
- - name: cf2ce-demo
-   random-route: true
-   memory: 128M
