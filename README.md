@@ -13,4 +13,12 @@ description to follow
   ```sh
   ibmcloud ce app bind --name cf2ce-demo --si Cloudant-CFCE -r Manager
   ```
+  or, if you already have created a service instance key, e.g., by
+  ```
+  ibmcloud resource service-key-create Cloudant-CFCE-getstarted-Manager Manager --instance-name Cloudant-CFCE --output json
+  ```
+  then bind by reusing the service credentials:
+  ```
+  ibmcloud ce app bind --name cf2ce-demo --service-credential Cloudant-CFCE-getstarted-Manager --service-instance Cloudant-CFCE
+  ```
 - Visit the app's URL.
